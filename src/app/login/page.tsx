@@ -27,12 +27,15 @@ export default function LoginPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            emailRedirectTo: `${location.origin}/auth/callback`,
-          },
         })
         if (error) throw error
-        setMessage('Check your email to confirm your account!')
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+        if (signInError) throw signInError
+        router.push('/')
+        router.refresh()
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
