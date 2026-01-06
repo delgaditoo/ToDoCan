@@ -140,7 +140,7 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground animate-pulse">
         <p>Loading...</p>
       </div>
     )
