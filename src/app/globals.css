@@ -22,6 +22,9 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
+    --button-background: 24 94% 58%;   /* orange-500 */
+    --button-border: 24 94% 45%;       /* orange-600 */
+    --button-foreground: 0 0% 0%;      /* black */
     --radius: 0.5rem;
   }
 
@@ -42,9 +45,12 @@
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border: 217 25% 35%;
+    --input: 217 25% 35%;
+    --ring: 212 35% 55%;
+    --button-background: 262 70% 38%;  /* violet-700 */
+    --button-border: 262 75% 26%;      /* violet-900 */
+    --button-foreground: 0 0% 100%;    /* white */
   }
 }
 
@@ -54,6 +60,12 @@ html, body {
 
 * {
   transition: color 500ms ease, background-color 500ms ease, border-color 500ms ease, fill 500ms ease, stroke 500ms ease;
+}
+
+button, [role="button"] {
+  transition: background-color 150ms ease,
+              color 150ms ease,
+              border-color 150ms ease;
 }
 
 

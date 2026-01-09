@@ -14,6 +14,12 @@ export default {
         foreground: "hsl(var(--foreground))",
         ring: "hsl(var(--ring))",
         input: "hsl(var(--input))",
+
+        button: "hsl(var(--button-background))",
+        "button-hover": "hsl(var(--button-background-hover))",
+        "button-foreground": "hsl(var(--button-foreground))",
+        "button-border": "hsl(var(--button-border))",
+
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",

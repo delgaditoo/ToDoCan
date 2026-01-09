@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Loader } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -15,7 +16,14 @@ export default function LoginPage() {
   const [message, setMessage] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (searchParams.get('mode') === 'signup') {
+      setIsSignUp(true)
+    }
+  }, [searchParams])
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -34,7 +42,7 @@ export default function LoginPage() {
           password,
         })
         if (signInError) throw signInError
-        router.push('/')
+        router.push('/app')
         router.refresh()
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -42,7 +50,7 @@ export default function LoginPage() {
           password,
         })
         if (error) throw error
-        router.push('/')
+        router.push('/app')
         router.refresh()
       }
     } catch (error: any) {
@@ -85,8 +93,23 @@ export default function LoginPage() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Loading...' : isSignUp ? 'Sign Up' : 'Sign In'}
+            <Button
+              type="submit"
+              className="
+                w-full
+                h-10
+                rounded-md
+                text-sm font-medium
+                bg-[hsl(var(--button-background))]
+                text-[hsl(var(--button-foreground))]
+                transition-[background-color,color,border-color] duration-75
+                border-b-4
+                border-b-[hsl(var(--button-border))]
+                active:border-b-0
+              "
+              disabled={loading}
+            >
+              {loading ? <Loader className="flex items-center justify-center h-15 w-15 animate-spin" /> : isSignUp ? 'Sign Up' : 'Sign In'}
             </Button>
           </form>
 
