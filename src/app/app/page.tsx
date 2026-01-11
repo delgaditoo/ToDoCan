@@ -18,15 +18,84 @@ type Todo = {
   id: string
   title: string
   completed: boolean
+  flagged: boolean
   created_at: string
   user_id: string
+}
+
+function AiToggle({
+  enabled,
+  onChange,
+}: {
+  enabled: boolean
+  onChange: (next: boolean) => void
+}) {
+  const MOVE = 'translate-x-[60px]' // w-24, px-1.5, thumb w-6
+
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!enabled)}
+      aria-pressed={enabled}
+      className={cn(
+        'relative h-9 w-24 px-1.5 rounded-md overflow-hidden',
+        'text-sm font-medium',
+        'transition-[background-color,color,border-color] duration-75',
+        enabled
+          ? cn(
+              'bg-[hsl(var(--button-background))]',
+              'text-[hsl(var(--button-foreground))]',
+              'border-b-4 border-b-[hsl(var(--button-border))]',
+            )
+          : cn(
+              'bg-background text-foreground',
+              'border border-[hsl(var(--border))]',
+              'border-b-4 border-b-[#888f9b]'
+            )
+      )}
+    >
+      <span
+        className={cn(
+          'absolute inset-0 z-0 flex items-center',
+          enabled ? 'justify-start pl-2.5' : 'justify-end pr-2.5'
+        )}
+      >
+        {enabled ? 'AI' : 'No AI'}
+      </span>
+
+      <span
+        className={cn(
+          'absolute left-1.5 top-1/2 -translate-y-1/2 z-10',
+          'h-6 w-6 rounded-md shadow',
+          'bg-[hsl(var(--foreground))]',
+          'transition-transform duration-200 ease-in-out will-change-transform',
+          enabled ? MOVE : 'translate-x-0'
+        )}
+      />
+    </button>
+  )
 }
 
 export default function AppPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [newTodo, setNewTodo] = useState('')
   const [newFlagged, setNewFlagged] = useState(false)
-  const [flags, setFlags] = useState<Record<string, boolean>>({})
+
+  const [aiPowered, setAiPowered] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  // Debug: wird im UI angezeigt + console
+  const [aiDebugOpen, setAiDebugOpen] = useState(true)
+  const [aiDebug, setAiDebug] = useState<{
+    at: string
+    status: number | null
+    ok: boolean | null
+    contentType: string | null
+    raw: string
+    parsed: any
+  } | null>(null)
+
   const [loading, setLoading] = useState(true)
   const [typed, setTyped] = useState('')
   const [user, setUser] = useState<{ id: string } | null>(null)
@@ -38,7 +107,7 @@ export default function AppPage() {
   const [mounted, setMounted] = useState(false)
   const [rotation, setRotation] = useState(0)
 
-  // Typewriter intern (keine Re-Renders)
+  // Typewriter intern
   const idxRef = useRef(0)
   const charRef = useRef(0)
   const deletingRef = useRef(false)
@@ -60,37 +129,20 @@ export default function AppPage() {
     []
   )
 
-  useEffect(() => {
-    setMounted(true)
-    const storedFlags = localStorage.getItem('todocan-flags')
-    if (storedFlags) {
-      try {
-        setFlags(JSON.parse(storedFlags))
-      } catch {
-        setFlags({})
-      }
-    }
-  }, [])
+  useEffect(() => setMounted(true), [])
 
-  // persist flags whenever they change (keeps UI update immediate, storage async)
-  useEffect(() => {
-    localStorage.setItem('todocan-flags', JSON.stringify(flags))
-  }, [flags])
-
-  // Typewriter: stabil, rotiert garantiert durch alle Placeholder
+  // Typewriter: pausiert sobald User tippt
   useEffect(() => {
     const TICK_MS = 70
-    const TYPE_EVERY = 1 // alle 2 Ticks ein Zeichen tippen (langsamer)
-    const DELETE_EVERY = 1 // alle 1 Tick ein Zeichen löschen
-    const HOLD_TICKS = 18 // wie lange nach komplettem Tippen stehen bleiben
+    const TYPE_EVERY = 1
+    const DELETE_EVERY = 1
+    const HOLD_TICKS = 18
 
     let tickCount = 0
 
     const id = window.setInterval(() => {
-      // wenn User tippt: Typewriter pausieren und Text ausblenden
       if (newTodo.trim().length > 0) {
         if (typed !== '') setTyped('')
-        // Zustand so lassen, damit beim Leeren sauber weitergeht
         return
       }
 
@@ -98,14 +150,12 @@ export default function AppPage() {
       tickCount += 1
 
       if (!deletingRef.current) {
-        // typing
         if (charRef.current < full.length) {
           if (tickCount % TYPE_EVERY === 0) {
             charRef.current += 1
             setTyped(full.slice(0, charRef.current))
           }
         } else {
-          // hold
           holdTicksRef.current += 1
           if (holdTicksRef.current >= HOLD_TICKS) {
             deletingRef.current = true
@@ -113,17 +163,14 @@ export default function AppPage() {
           }
         }
       } else {
-        // deleting
         if (charRef.current > 0) {
           if (tickCount % DELETE_EVERY === 0) {
             charRef.current -= 1
             setTyped(full.slice(0, charRef.current))
           }
         } else {
-          // next
           deletingRef.current = false
           idxRef.current = (idxRef.current + 1) % placeholderOptions.length
-          // vorbereiten
           charRef.current = 0
           holdTicksRef.current = 0
         }
@@ -154,8 +201,15 @@ export default function AppPage() {
       setLoading(false)
     }
 
-    init()
+    void init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then((d) => setIsAdmin(Boolean(d?.isAdmin)))
+      .catch(() => setIsAdmin(false))
   }, [])
 
   const fetchTodos = async (userId: string) => {
@@ -163,6 +217,7 @@ export default function AppPage() {
       .from('todos')
       .select('*')
       .eq('user_id', userId)
+      .order('flagged', { ascending: false })
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -174,13 +229,12 @@ export default function AppPage() {
     setTodos((data as Todo[]) || [])
   }
 
-  const addTodo = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const addTodo = async () => {
     if (!newTodo.trim() || !user) return
 
     const { data, error } = await supabase
       .from('todos')
-      .insert([{ title: newTodo.trim(), user_id: user.id }])
+      .insert([{ title: newTodo.trim(), user_id: user.id, flagged: newFlagged }])
       .select()
 
     if (error) {
@@ -191,9 +245,84 @@ export default function AppPage() {
     if (data?.[0]) {
       const created = data[0] as Todo
       setTodos((prev) => [created, ...prev])
-      setFlags((prev) => ({ ...prev, [created.id]: newFlagged }))
       setNewTodo('')
       setNewFlagged(false)
+    }
+  }
+
+  // AI: nimmt newTodo als Prompt, und erstellt mehrere Todos
+  const aiToTodos = async () => {
+    if (!user) return
+    const text = newTodo.trim()
+    if (!text) return
+
+    setAiLoading(true)
+
+    const stamp = new Date().toISOString()
+    setAiDebug({
+      at: stamp,
+      status: null,
+      ok: null,
+      contentType: null,
+      raw: '',
+      parsed: null,
+    })
+
+    try {
+      const res = await fetch('/api/todos/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, flagged: newFlagged }),
+      })
+
+      const contentType = res.headers.get('content-type')
+      const raw = await res.text()
+
+      let parsed: any = null
+      try {
+        parsed = raw ? JSON.parse(raw) : null
+      } catch {
+        parsed = null
+      }
+
+      const snapshot = {
+        at: stamp,
+        status: res.status,
+        ok: res.ok,
+        contentType,
+        raw,
+        parsed,
+      }
+      setAiDebug(snapshot)
+
+      console.groupCollapsed('[AI] /api/todos/ai', res.status)
+      console.log('content-type:', contentType)
+      console.log('raw:', raw)
+      console.log('parsed:', parsed)
+      console.groupEnd()
+
+      if (!res.ok) return
+
+      const created = Array.isArray(parsed?.created) ? (parsed.created as Todo[]) : []
+      if (created.length === 0) return
+
+      setTodos((prev) => [...created, ...prev])
+
+      // AI Todos: Input reset, Flag reset (AI flagged muss im Backend passieren)
+      setNewTodo('')
+      setNewFlagged(false)
+    } catch (e) {
+      console.error('[AI] fetch crashed:', e)
+      setAiDebug((prev) => ({
+        at: prev?.at ?? stamp,
+        status: -1,
+        ok: false,
+        contentType: null,
+        raw: String(e),
+        parsed: null,
+      }))
+    } finally {
+      setAiLoading(false)
     }
   }
 
@@ -217,11 +346,19 @@ export default function AppPage() {
     }
 
     setTodos((prev) => prev.filter((t) => t.id !== id))
-    setFlags((prev) => {
-      const { [id]: _, ...rest } = prev
-      localStorage.setItem('todocan-flags', JSON.stringify(rest))
-      return rest
-    })
+  }
+
+  const toggleFlag = async (todo: Todo) => {
+    const next = !todo.flagged
+
+    setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, flagged: next } : t)))
+
+    const { error } = await supabase.from('todos').update({ flagged: next }).eq('id', todo.id)
+
+    if (error) {
+      console.error(error)
+      setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, flagged: !next } : t)))
+    }
   }
 
   const signOut = async () => {
@@ -237,19 +374,6 @@ export default function AppPage() {
       setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
     }, 120)
   }
-
-  const toggleFlag = (id: string) => {
-    setFlags((prev) => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  const sortedTodos = useMemo(() => {
-    return [...todos].sort((a, b) => {
-      const fa = !!flags[a.id]
-      const fb = !!flags[b.id]
-      if (fa !== fb) return fa ? -1 : 1
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    })
-  }, [todos, flags])
 
   const FlagButton = ({
     active,
@@ -281,8 +405,14 @@ export default function AppPage() {
   )
 
   if (loading) {
-    return <Loader className="min-h-screen flex items-center justify-center bg-background animate-spin text-muted-foreground" />
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-background">
+        <Loader className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
+
+  const showPlaceholder = newTodo.trim().length === 0
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -303,19 +433,31 @@ export default function AppPage() {
             <h1 className="text-2xl md:text-3xl font-bold">ToDoCan</h1>
           </div>
 
-          <Button
-            onClick={signOut}
-            className="
-              h-9 px-4 rounded-md text-sm font-medium
-              bg-[hsl(var(--button-background))]
-              text-[hsl(var(--button-foreground))]
-              transition-[background-color,color,border-color] duration-75
-              border-b-4 border-b-[hsl(var(--button-border))]
-              active:border-b-0
-            "
-          >
-            Sign Out
-          </Button>
+          <div className="flex items-center gap-3">
+            <AiToggle
+              enabled={aiPowered}
+              onChange={(next) => {
+                setAiPowered(next)
+                setAiDebug(null)
+                setAiLoading(false)
+                setAiDebugOpen(false)
+              }}
+            />
+
+            <Button
+              onClick={signOut}
+              className="
+                h-9 px-4 rounded-md text-sm font-medium
+                bg-[hsl(var(--button-background))]
+                text-[hsl(var(--button-foreground))]
+                transition-[background-color,color,border-color] duration-75
+                border-b-4 border-b-[hsl(var(--button-border))]
+                active:border-b-0
+              "
+            >
+              Sign Out
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -323,9 +465,48 @@ export default function AppPage() {
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
           <Card>
             <CardContent className="space-y-4">
-              <h2 className="text-xl font-semibold">Add New Todo</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-xl font-semibold">Add New Todo</h2>
+                {aiPowered && isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setAiDebugOpen((p) => !p)}
+                    className="text-xs text-muted-foreground hover:underline"
+                  >
+                    {aiDebugOpen ? 'Hide AI debug' : 'Show AI debug'}
+                  </button>
+                )}
+              </div>
 
-              <form onSubmit={addTodo} className="w-full">
+              {aiPowered && isAdmin && aiDebugOpen && (
+                <div className="rounded-md border border-border bg-card p-3 text-xs">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <span className="text-muted-foreground">AI Debug</span>
+                    <span className="text-muted-foreground">Status:</span>
+                    <span>{aiDebug?.status ?? '-'}</span>
+                    <span className="text-muted-foreground">OK:</span>
+                    <span>{aiDebug?.ok === null ? '-' : String(aiDebug?.ok)}</span>
+                    <span className="text-muted-foreground">CT:</span>
+                    <span className="truncate max-w-55">{aiDebug?.contentType ?? '-'}</span>
+                  </div>
+
+                  <div className="mt-2">
+                    <div className="text-muted-foreground mb-1">Raw response</div>
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
+                      {aiDebug?.raw || '(empty)'}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (aiPowered) void aiToTodos()
+                  else void addTodo()
+                }}
+                className="w-full"
+              >
                 <div className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-card py-2">
                   <div className="relative flex-1 min-w-55">
                     <Input
@@ -335,7 +516,7 @@ export default function AppPage() {
                       className="flex-1 placeholder-transparent pr-12"
                     />
 
-                    {newTodo.trim().length === 0 && (
+                    {showPlaceholder && (
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">
                         {typed}
                         <span className="inline-block w-[1ch] animate-pulse">|</span>
@@ -353,6 +534,7 @@ export default function AppPage() {
 
                   <Button
                     type="submit"
+                    disabled={aiPowered && aiLoading}
                     className="
                       h-9 px-4 rounded-md text-sm font-medium
                       bg-[hsl(var(--button-background))]
@@ -362,22 +544,28 @@ export default function AppPage() {
                       active:border-b-0
                     "
                   >
-                    Add
+                    {aiPowered ? (aiLoading ? 'Generating...' : 'Generate') : 'Add'}
                   </Button>
                 </div>
+
+                {aiPowered && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    AI mode: type a prompt, click to generate Todos. ToDoCan AI can make mistakes, check important info.
+                  </p>
+                )}
               </form>
             </CardContent>
           </Card>
 
           <motion.div layout className="space-y-2">
-            {sortedTodos.length === 0 ? (
+            {todos.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-center text-muted-foreground">
                   No todos yet. Add one above to get started!
                 </CardContent>
               </Card>
             ) : (
-              sortedTodos.map((todo) => (
+              todos.map((todo) => (
                 <motion.div
                   key={todo.id}
                   layout
@@ -393,19 +581,24 @@ export default function AppPage() {
                           onCheckedChange={() => toggleTodo(todo.id, todo.completed)}
                           className="h-6 w-6"
                         />
-                        <span className={`flex-1 ${todo.completed ? 'line-through text-muted-foreground' : ''}`}>
+                        <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>
                           {todo.title}
                         </span>
                         <div className="flex items-center gap-2">
                           <FlagButton
-                            active={!!flags[todo.id]}
+                            active={todo.flagged}
                             onClick={(e) => {
                               e.stopPropagation()
-                              toggleFlag(todo.id)
+                              void toggleFlag(todo)
                             }}
-                            label={flags[todo.id] ? 'Unflag todo' : 'Flag todo as priority'}
+                            label={todo.flagged ? 'Unflag todo' : 'Flag todo as priority'}
                           />
-                          <Button onClick={() => deleteTodo(todo.id)} variant="destructive" size="sm" className="hover:scale-110">
+                          <Button
+                            onClick={() => void deleteTodo(todo.id)}
+                            variant="destructive"
+                            size="sm"
+                            className="hover:scale-110"
+                          >
                             Delete
                           </Button>
                         </div>

@@ -1,86 +1,145 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { createClient } from "../../lib/supabase/client"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Loader } from "lucide-react"
+
+type MsgKind = "info" | "error" | "success"
 
 export default function LoginClient() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState("")
+  const [message, setMessage] = useState<{ kind: MsgKind; text: string } | null>(null)
   const [isSignUp, setIsSignUp] = useState(false)
 
   const router = useRouter()
   const searchParams = useSearchParams()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
-    if (searchParams.get("mode") === "signup") {
-      setIsSignUp(true)
-    }
+    setIsSignUp(searchParams.get("mode") === "signup")
   }, [searchParams])
+
+  const PrimaryButtonClasses = `
+    bg-[hsl(var(--button-background))]
+    text-[hsl(var(--button-foreground))]
+    transition-[background-color,color,border-color] duration-75
+    border-b-4 border-b-[hsl(var(--button-border))]
+    active:border-b-0
+  `
+
+  const signInWithGoogle = async () => {
+    if (loading) return
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      const origin = window.location.origin
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${origin}/auth/callback?next=/app`,
+        },
+      })
+      if (error) throw error
+      // Redirect läuft über OAuth, hier kein router.push nötig
+    } catch (err: any) {
+      setMessage({ kind: "error", text: err?.message ?? "Google sign-in failed" })
+      setLoading(false)
+    }
+  }
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (loading) return
+
     setLoading(true)
-    setMessage("")
+    setMessage(null)
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({ email, password })
+        if (error) throw error
+
+        const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
-        if (error) throw error
-
-        const { error: signInError } =
-          await supabase.auth.signInWithPassword({
-            email,
-            password,
-          })
         if (signInError) throw signInError
       } else {
-        const { error } =
-          await supabase.auth.signInWithPassword({
-            email,
-            password,
-          })
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
       }
 
       router.push("/app")
       router.refresh()
-    } catch (error: any) {
-      setMessage(error.message)
+    } catch (err: any) {
+      setMessage({ kind: "error", text: err?.message ?? "Auth failed" })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sendReset = async () => {
+    if (loading) return
+
+    const cleanEmail = email.trim()
+    if (!cleanEmail) {
+      setMessage({ kind: "error", text: "Enter your email first." })
+      return
+    }
+
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      const origin = window.location.origin
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: `${origin}/reset-password`,
+      })
+      if (error) throw error
+
+      setMessage({ kind: "success", text: "Password reset email sent. Check your inbox." })
+    } catch (err: any) {
+      setMessage({ kind: "error", text: err?.message ?? "Failed to send reset email" })
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>{isSignUp ? "Sign Up" : "Sign In"}</CardTitle>
           <CardDescription>
-            {isSignUp
-              ? "Create an account to get started"
-              : "Welcome back! Please sign in to continue"}
+            {isSignUp ? "Create an account to get started" : "Welcome back! Please sign in to continue"}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+
+        <CardContent className="space-y-4">
+          <Button
+            type="button"
+            className={`w-full ${PrimaryButtonClasses} group`}
+            onClick={signInWithGoogle}
+            aria-disabled={loading}
+          >
+            {loading ? 
+              <Loader className="h-5 w-5 animate-spin" /> : "Continue with Google" }
+          </Button>
+
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           <form onSubmit={handleAuth} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -91,11 +150,26 @@ export default function LoginClient() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="email"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+
+                {!isSignUp && (
+                  <button
+                    type="button"
+                    onClick={sendReset}
+                    disabled={loading}
+                    className="text-xs text-muted-foreground hover:underline disabled:opacity-50"
+                  >
+                    Forgot your password?
+                  </button>
+                )}
+              </div>
+
               <Input
                 id="password"
                 type="password"
@@ -103,39 +177,41 @@ export default function LoginClient() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                autoComplete={isSignUp ? "new-password" : "current-password"}
               />
             </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={loading}
-            >
-              {loading ? (
-                <Loader className="h-5 w-5 animate-spin" />
-              ) : isSignUp ? (
-                "Sign Up"
-              ) : (
-                "Sign In"
-              )}
+            <Button type="submit" className={`w-full ${PrimaryButtonClasses}`} disabled={loading}>
+              {loading ? <Loader className="h-5 w-5 animate-spin" /> : isSignUp ? "Sign Up" : "Sign In"}
             </Button>
           </form>
 
           {message && (
-            <p className="mt-4 text-sm text-center text-gray-600">
-              {message}
+            <p
+              className={
+                message.kind === "error"
+                  ? "text-sm text-center text-red-500"
+                  : message.kind === "success"
+                    ? "text-sm text-center text-green-500"
+                    : "text-sm text-center text-muted-foreground"
+              }
+            >
+              {message.text}
             </p>
           )}
 
-          <div className="mt-4 text-center">
+          <div className="text-center">
             <button
               type="button"
-              onClick={() => setIsSignUp(!isSignUp)}
-              className="text-sm text-blue-600 hover:underline"
+              onClick={() => {
+                if (loading) return
+                setIsSignUp((p) => !p)
+                setMessage(null)
+              }}
+              className="text-sm text-blue-600 hover:underline disabled:opacity-50"
+              disabled={loading}
             >
-              {isSignUp
-                ? "Already have an account? Sign in"
-                : "Don't have an account? Sign up"}
+              {isSignUp ? "Already have an account? Sign in" : "Don't have an account? Sign up"}
             </button>
           </div>
         </CardContent>

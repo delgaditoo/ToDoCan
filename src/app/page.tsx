@@ -17,6 +17,17 @@ export default function LandingPage() {
   const [rotation, setRotation] = useState(0)
   const [mounted, setMounted] = useState(false)
 
+  const signInWithGoogle = async () => {
+  const origin = window.location.origin
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${origin}/auth/callback?next=/app`,
+    },
+  })
+  if (error) console.error(error)
+}
+
   useEffect(() => {
     setMounted(true)
   }, [])
@@ -62,12 +73,12 @@ export default function LandingPage() {
         <p className="text-lg md:text-xl text-muted-foreground">
           The only ToDoApp you will ever need
         </p>
-        <div className="flex justify-center">
+        <div className="flex flex-col items-center gap-1">
           <Button
             asChild
             size="lg"
             className="
-              px-6
+              px-14
               rounded-md
               text-sm font-medium
               bg-[hsl(var(--button-background))]
@@ -79,6 +90,9 @@ export default function LandingPage() {
             "
           >     
             <Link href="/login?mode=signup">Sign Up</Link>
+          </Button>
+          <Button type="button" size="lg" className="px-10 text-[hsl(var(--button-background))] transition-all duration-150 hover:scale-[1.01] hover:text-[hsl(var(--button-border))]" onClick={signInWithGoogle}>
+              Continue with Google
           </Button>
         </div>
       </div>
