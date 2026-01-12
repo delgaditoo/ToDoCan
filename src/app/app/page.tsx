@@ -23,15 +23,14 @@ type Todo = {
   user_id: string
 }
 
-function AiToggle({
-  enabled,
-  onChange,
-}: {
-  enabled: boolean
-  onChange: (next: boolean) => void
-}) {
-  const MOVE = 'translate-x-[60px]' // w-24, px-1.5, thumb w-6
+const sortTodos = (arr: Todo[]) =>
+  [...arr].sort((a, b) => {
+    if (a.flagged !== b.flagged) return a.flagged ? -1 : 1
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  })
 
+function AiToggle({ enabled, onChange }: { enabled: boolean; onChange: (next: boolean) => void }) {
+  const MOVE = 'translate-x-[60px]'
   return (
     <button
       type="button"
@@ -45,21 +44,12 @@ function AiToggle({
           ? cn(
               'bg-[hsl(var(--button-background))]',
               'text-[hsl(var(--button-foreground))]',
-              'border-b-4 border-b-[hsl(var(--button-border))]',
+              'border-b-4 border-b-[hsl(var(--button-border))]'
             )
-          : cn(
-              'bg-background text-foreground',
-              'border border-[hsl(var(--border))]',
-              'border-b-4 border-b-[#888f9b]'
-            )
+          : cn('bg-background text-foreground', 'border border-[hsl(var(--border))]', 'border-b-4 border-b-[#888f9b]')
       )}
     >
-      <span
-        className={cn(
-          'absolute inset-0 z-0 flex items-center',
-          enabled ? 'justify-start pl-2.5' : 'justify-end pr-2.5'
-        )}
-      >
+      <span className={cn('absolute inset-0 z-0 flex items-center', enabled ? 'justify-start pl-2.5' : 'justify-end pr-2.5')}>
         {enabled ? 'AI' : 'No AI'}
       </span>
 
@@ -76,6 +66,40 @@ function AiToggle({
   )
 }
 
+function FlagButton({
+  active,
+  disabled,
+  onToggle,
+  label,
+}: {
+  active: boolean
+  disabled?: boolean
+  onToggle: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={label}
+      disabled={disabled}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onToggle()
+      }}
+      className={cn(
+        'p-2 -m-2 rounded-md',
+        'transition-transform duration-150',
+        'hover:scale-110 active:scale-95',
+        'disabled:opacity-100 disabled:cursor-not-allowed'
+      )}
+    >
+      <Flag className={cn('h-5 w-5', active ? 'text-red-500 fill-red-500/20' : 'text-muted-foreground')} />
+    </button>
+  )
+}
+
 export default function AppPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [newTodo, setNewTodo] = useState('')
@@ -85,7 +109,6 @@ export default function AppPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
 
-  // Debug: wird im UI angezeigt + console
   const [aiDebugOpen, setAiDebugOpen] = useState(true)
   const [aiDebug, setAiDebug] = useState<{
     at: string
@@ -106,6 +129,10 @@ export default function AppPage() {
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
   const [rotation, setRotation] = useState(0)
+
+  // pro Todo: letzte gewünschte Flag-State + laufender Request Schutz
+  const desiredFlagRef = useRef<Record<string, boolean>>({})
+  const inFlightRef = useRef<Record<string, boolean>>({})
 
   // Typewriter intern
   const idxRef = useRef(0)
@@ -226,7 +253,13 @@ export default function AppPage() {
       return
     }
 
-    setTodos((data as Todo[]) || [])
+    const list = (data as Todo[]) || []
+    // desired state initialisieren
+    const nextDesired: Record<string, boolean> = {}
+    for (const t of list) nextDesired[t.id] = t.flagged
+    desiredFlagRef.current = { ...desiredFlagRef.current, ...nextDesired }
+
+    setTodos(list)
   }
 
   const addTodo = async () => {
@@ -244,13 +277,13 @@ export default function AppPage() {
 
     if (data?.[0]) {
       const created = data[0] as Todo
-      setTodos((prev) => [created, ...prev])
+      desiredFlagRef.current[created.id] = created.flagged
+      setTodos((prev) => sortTodos([created, ...prev]))
       setNewTodo('')
       setNewFlagged(false)
     }
   }
 
-  // AI: nimmt newTodo als Prompt, und erstellt mehrere Todos
   const aiToTodos = async () => {
     if (!user) return
     const text = newTodo.trim()
@@ -285,30 +318,23 @@ export default function AppPage() {
         parsed = null
       }
 
-      const snapshot = {
+      setAiDebug({
         at: stamp,
         status: res.status,
         ok: res.ok,
         contentType,
         raw,
         parsed,
-      }
-      setAiDebug(snapshot)
-
-      console.groupCollapsed('[AI] /api/todos/ai', res.status)
-      console.log('content-type:', contentType)
-      console.log('raw:', raw)
-      console.log('parsed:', parsed)
-      console.groupEnd()
+      })
 
       if (!res.ok) return
 
       const created = Array.isArray(parsed?.created) ? (parsed.created as Todo[]) : []
       if (created.length === 0) return
 
-      setTodos((prev) => [...created, ...prev])
+      for (const t of created) desiredFlagRef.current[t.id] = t.flagged
+      setTodos((prev) => sortTodos([...created, ...prev]))
 
-      // AI Todos: Input reset, Flag reset (AI flagged muss im Backend passieren)
       setNewTodo('')
       setNewFlagged(false)
     } catch (e) {
@@ -327,38 +353,69 @@ export default function AppPage() {
   }
 
   const toggleTodo = async (id: string, completed: boolean) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !completed } : t)))
+
     const { error } = await supabase.from('todos').update({ completed: !completed }).eq('id', id)
 
     if (error) {
       console.error('Error updating todo:', error)
-      return
+      setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed } : t)))
     }
-
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !completed } : t)))
   }
 
   const deleteTodo = async (id: string) => {
     const { error } = await supabase.from('todos').delete().eq('id', id)
-
     if (error) {
       console.error('Error deleting todo:', error)
       return
     }
-
+    delete desiredFlagRef.current[id]
+    delete inFlightRef.current[id]
     setTodos((prev) => prev.filter((t) => t.id !== id))
   }
 
-  const toggleFlag = async (todo: Todo) => {
-    const next = !todo.flagged
+  // Knackpunkt: spam-klicks müssen sofort UI togglen und am Ende DB auf "letzten Wunsch" bringen.
+  const toggleFlag = (todo: Todo) => {
+    const id = todo.id
+    const currentDesired = desiredFlagRef.current[id] ?? todo.flagged
+    const nextDesired = !currentDesired
 
-    setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, flagged: next } : t)))
+    // 1) sofort UI (optimistic) + sofort re-sort
+    desiredFlagRef.current[id] = nextDesired
+    setTodos((prev) => sortTodos(prev.map((t) => (t.id === id ? { ...t, flagged: nextDesired } : t))))
 
-    const { error } = await supabase.from('todos').update({ flagged: next }).eq('id', todo.id)
+    // 2) wenn schon ein request läuft, NICHT noch einen starten. Der laufende request zieht danach nach.
+    if (inFlightRef.current[id]) return
 
-    if (error) {
-      console.error(error)
-      setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, flagged: !next } : t)))
+    // 3) worker: immer wieder DB auf desired setzen, bis es passt
+    const sync = async () => {
+      inFlightRef.current[id] = true
+      try {
+        // loop: falls während request erneut geklickt wurde, kommt danach ein weiterer update
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const target = desiredFlagRef.current[id]
+          if (typeof target !== 'boolean') return
+
+          const { error } = await supabase.from('todos').update({ flagged: target }).eq('id', id)
+          if (error) {
+            console.error('Flag update failed:', error)
+            // bei error: UI nicht zurückspringen lassen. User sieht seinen Wunsch sofort.
+            // du könntest hier toasten, aber kein rollback.
+            return
+          }
+
+          // wenn in der Zwischenzeit nicht weiter geklickt wurde, sind wir fertig
+          const still = desiredFlagRef.current[id]
+          if (still === target) return
+          // sonst loop nochmal und setze neuesten Wunsch
+        }
+      } finally {
+        inFlightRef.current[id] = false
+      }
     }
+
+    void sync()
   }
 
   const signOut = async () => {
@@ -375,34 +432,7 @@ export default function AppPage() {
     }, 120)
   }
 
-  const FlagButton = ({
-    active,
-    onClick,
-    label,
-  }: {
-    active: boolean
-    onClick: (e: React.MouseEvent) => void
-    label: string
-  }) => (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        onClick(e)
-      }}
-      aria-pressed={active}
-      aria-label={label}
-      style={{ transition: 'transform 150ms ease' }}
-      className={cn(
-        'h-6 w-6 rounded-md flex items-center justify-center bg-transparent transition-transform duration-150',
-        'hover:scale-110',
-        active ? 'text-red-500' : 'text-muted-foreground'
-      )}
-    >
-      <Flag className={cn('h-4 w-4', active ? 'fill-red-500/20 text-red-500' : '')} />
-    </button>
-  )
+  const visibleTodos = useMemo(() => sortTodos(todos), [todos])
 
   if (loading) {
     return (
@@ -418,7 +448,7 @@ export default function AppPage() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="w-full border-b border-border/60 bg-background/80 backdrop-blur">
         <div className="max-w-4xl mx-auto flex items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mr-4 sm:mr-0">
             <motion.button
               type="button"
               onClick={onLogoClick}
@@ -430,7 +460,7 @@ export default function AppPage() {
             >
               <Image src="/todocan.svg" alt="Todocan Logo" width={40} height={40} priority />
             </motion.button>
-            <h1 className="text-2xl md:text-3xl font-bold">ToDoCan</h1>
+            <h1 className="text-2xl md:text-3xl font-bold whitespace-nowrap">ToDoCan</h1>
           </div>
 
           <div className="flex items-center gap-3">
@@ -492,9 +522,7 @@ export default function AppPage() {
 
                   <div className="mt-2">
                     <div className="text-muted-foreground mb-1">Raw response</div>
-                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
-                      {aiDebug?.raw || '(empty)'}
-                    </pre>
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">{aiDebug?.raw || '(empty)'}</pre>
                   </div>
                 </div>
               )}
@@ -507,8 +535,8 @@ export default function AppPage() {
                 }}
                 className="w-full"
               >
-                <div className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-card py-2">
-                  <div className="relative flex-1 min-w-55">
+                <div className="flex w-full flex-nowrap items-center gap-2 rounded-lg bg-card py-2">
+                  <div className="relative flex-1 min-w-0">
                     <Input
                       type="text"
                       value={newTodo}
@@ -526,7 +554,7 @@ export default function AppPage() {
                     <div className="absolute inset-y-0 right-2 flex items-center">
                       <FlagButton
                         active={newFlagged}
-                        onClick={() => setNewFlagged((p) => !p)}
+                        onToggle={() => setNewFlagged((p) => !p)}
                         label={newFlagged ? 'Unflag new todo' : 'Flag new todo as priority'}
                       />
                     </div>
@@ -535,6 +563,7 @@ export default function AppPage() {
                   <Button
                     type="submit"
                     disabled={aiPowered && aiLoading}
+                    aria-busy={aiPowered && aiLoading}
                     className="
                       h-9 px-4 rounded-md text-sm font-medium
                       bg-[hsl(var(--button-background))]
@@ -542,15 +571,29 @@ export default function AppPage() {
                       transition-[background-color,color,border-color] duration-75
                       border-b-4 border-b-[hsl(var(--button-border))]
                       active:border-b-0
+                      shrink-0
+                      disabled:opacity-100
                     "
                   >
-                    {aiPowered ? (aiLoading ? 'Generating...' : 'Generate') : 'Add'}
+                    {aiPowered ? (
+                      aiLoading ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Loader className="h-4 w-4 animate-spin" />
+                          Generating
+                        </span>
+                      ) : (
+                        'Generate'
+                      )
+                    ) : (
+                      'Add'
+                    )}
                   </Button>
                 </div>
 
                 {aiPowered && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    AI mode: type a prompt, click to generate Todos. ToDoCan AI can make mistakes, check important info.
+                    <span className="font-semibold text-foreground">AI mode:</span>{' '}
+                    type a prompt, click to generate Todos. ToDoCan AI can make mistakes, check important info.
                   </p>
                 )}
               </form>
@@ -558,14 +601,12 @@ export default function AppPage() {
           </Card>
 
           <motion.div layout className="space-y-2">
-            {todos.length === 0 ? (
+            {visibleTodos.length === 0 ? (
               <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  No todos yet. Add one above to get started!
-                </CardContent>
+                <CardContent className="py-8 text-center text-muted-foreground">No todos yet. Add one above to get started!</CardContent>
               </Card>
             ) : (
-              todos.map((todo) => (
+              visibleTodos.map((todo) => (
                 <motion.div
                   key={todo.id}
                   layout
@@ -576,23 +617,17 @@ export default function AppPage() {
                   <Card>
                     <CardContent className="py-4">
                       <div className="flex items-center gap-3">
-                        <Checkbox
-                          checked={todo.completed}
-                          onCheckedChange={() => toggleTodo(todo.id, todo.completed)}
-                          className="h-6 w-6"
-                        />
-                        <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>
-                          {todo.title}
-                        </span>
+                        <Checkbox checked={todo.completed} onCheckedChange={() => toggleTodo(todo.id, todo.completed)} className="h-6 w-6" />
+
+                        <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>{todo.title}</span>
+
                         <div className="flex items-center gap-2">
                           <FlagButton
                             active={todo.flagged}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void toggleFlag(todo)
-                            }}
+                            onToggle={() => toggleFlag(todo)}
                             label={todo.flagged ? 'Unflag todo' : 'Flag todo as priority'}
                           />
+
                           <Button
                             onClick={() => void deleteTodo(todo.id)}
                             variant="destructive"
@@ -613,9 +648,7 @@ export default function AppPage() {
       </main>
 
       <footer className="w-full border-t border-border/60 py-4 bg-background/80 backdrop-blur">
-        <div className="max-w-4xl mx-auto px-4 text-center text-sm text-muted-foreground">
-          ToDoCan © 2026 All rights reserved
-        </div>
+        <div className="max-w-4xl mx-auto px-4 text-center text-sm text-muted-foreground">ToDoCan © 2026 All rights reserved</div>
       </footer>
     </div>
   )
