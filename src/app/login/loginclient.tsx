@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import { createClient } from "../../lib/supabase/client"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
@@ -14,7 +14,11 @@ type MsgKind = "info" | "error" | "success"
 export default function LoginClient() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+
+  // getrennte loading states
+  const [oauthLoading, setOauthLoading] = useState(false) // nur Google
+  const [authLoading, setAuthLoading] = useState(false) // nur Email SignIn/SignUp/Reset
+
   const [message, setMessage] = useState<{ kind: MsgKind; text: string } | null>(null)
   const [isSignUp, setIsSignUp] = useState(false)
 
@@ -35,8 +39,8 @@ export default function LoginClient() {
   `
 
   const signInWithGoogle = async () => {
-    if (loading) return
-    setLoading(true)
+    if (oauthLoading) return
+    setOauthLoading(true)
     setMessage(null)
 
     try {
@@ -48,18 +52,18 @@ export default function LoginClient() {
         },
       })
       if (error) throw error
-      // Redirect läuft über OAuth, hier kein router.push nötig
+      // OAuth redirect übernimmt, kein router.push hier nötig
     } catch (err: any) {
       setMessage({ kind: "error", text: err?.message ?? "Google sign-in failed" })
-      setLoading(false)
+      setOauthLoading(false)
     }
   }
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (loading) return
+    if (authLoading) return
 
-    setLoading(true)
+    setAuthLoading(true)
     setMessage(null)
 
     try {
@@ -82,12 +86,12 @@ export default function LoginClient() {
     } catch (err: any) {
       setMessage({ kind: "error", text: err?.message ?? "Auth failed" })
     } finally {
-      setLoading(false)
+      setAuthLoading(false)
     }
   }
 
   const sendReset = async () => {
-    if (loading) return
+    if (authLoading) return
 
     const cleanEmail = email.trim()
     if (!cleanEmail) {
@@ -95,7 +99,7 @@ export default function LoginClient() {
       return
     }
 
-    setLoading(true)
+    setAuthLoading(true)
     setMessage(null)
 
     try {
@@ -109,9 +113,11 @@ export default function LoginClient() {
     } catch (err: any) {
       setMessage({ kind: "error", text: err?.message ?? "Failed to send reset email" })
     } finally {
-      setLoading(false)
+      setAuthLoading(false)
     }
   }
+
+  const anyLoading = oauthLoading || authLoading
 
   return (
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
@@ -126,12 +132,11 @@ export default function LoginClient() {
         <CardContent className="space-y-4">
           <Button
             type="button"
-            className={`w-full ${PrimaryButtonClasses} group`}
+            className={`w-full ${PrimaryButtonClasses}`}
             onClick={signInWithGoogle}
-            aria-disabled={loading}
+            aria-busy={oauthLoading}
           >
-            {loading ? 
-              <Loader className="h-5 w-5 animate-spin" /> : "Continue with Google" }
+            {oauthLoading ? <Loader className="h-5 w-5 animate-spin" /> : "Continue with Google"}
           </Button>
 
           <div className="flex items-center gap-3">
@@ -162,8 +167,8 @@ export default function LoginClient() {
                   <button
                     type="button"
                     onClick={sendReset}
-                    disabled={loading}
-                    className="text-xs text-muted-foreground hover:underline disabled:opacity-50"
+                    disabled={authLoading}
+                    className="text-xs text-muted-foreground hover:underline"
                   >
                     Forgot your password?
                   </button>
@@ -181,8 +186,8 @@ export default function LoginClient() {
               />
             </div>
 
-            <Button type="submit" className={`w-full ${PrimaryButtonClasses}`} disabled={loading}>
-              {loading ? <Loader className="h-5 w-5 animate-spin" /> : isSignUp ? "Sign Up" : "Sign In"}
+            <Button type="submit" className={`w-full ${PrimaryButtonClasses}`} aria-busy={authLoading}>
+              {authLoading ? <Loader className="h-5 w-5 animate-spin" /> : isSignUp ? "Sign Up" : "Sign In"}
             </Button>
           </form>
 
@@ -204,12 +209,12 @@ export default function LoginClient() {
             <button
               type="button"
               onClick={() => {
-                if (loading) return
+                if (anyLoading) return
                 setIsSignUp((p) => !p)
                 setMessage(null)
               }}
-              className="text-sm text-blue-600 hover:underline disabled:opacity-50"
-              disabled={loading}
+              disabled={anyLoading}
+              className="text-sm text-blue-600 hover:underline"
             >
               {isSignUp ? "Already have an account? Sign in" : "Don't have an account? Sign up"}
             </button>
