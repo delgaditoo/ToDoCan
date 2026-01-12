@@ -187,7 +187,7 @@ export async function POST(req: Request) {
       'Each string must start with a verb.',
       'Choose an appropriate number of items based on the input (could be 1 to 7).',
       'If the input yields only one sensible action, output only one item.',
-       'CRITICAL: Output the todos in the SAME LANGUAGE as the user input. If mixed, use the dominant language.',
+      'CRITICAL: Output the todos in the SAME LANGUAGE as the user input. If mixed, use the dominant language.',
     ].join('\n')
 
     // Few-shot nur minimal, damit Stil klar ist, ohne Anzahl zu erzwingen
