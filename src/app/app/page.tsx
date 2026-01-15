@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
+import {DndContext, DragEndEvent, DragStartEvent, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter, DragOverlay} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useTheme } from 'next-themes'
 import { Flag, Loader } from 'lucide-react'
 
@@ -19,6 +22,7 @@ type Todo = {
   title: string
   completed: boolean
   flagged: boolean
+  position: number
   created_at: string
   user_id: string
 }
@@ -26,6 +30,9 @@ type Todo = {
 const sortTodos = (arr: Todo[]) =>
   [...arr].sort((a, b) => {
     if (a.flagged !== b.flagged) return a.flagged ? -1 : 1
+    const ap = (a as any).position ?? 0
+    const bp = (b as any).position ?? 0
+    if (ap !== bp) return ap - bp
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
 
@@ -100,10 +107,39 @@ function FlagButton({
   )
 }
 
+function SortableTodoRow({
+  todo,
+  children,
+}: {
+  todo: Todo
+  children: React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: todo.id,
+  })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.65 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {children}
+    </div>
+  )
+}
+
 export default function AppPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [newTodo, setNewTodo] = useState('')
   const [newFlagged, setNewFlagged] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  const sensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 8 } }))
 
   const [aiPowered, setAiPowered] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -122,6 +158,44 @@ export default function AppPage() {
   const [loading, setLoading] = useState(true)
   const [typed, setTyped] = useState('')
   const [user, setUser] = useState<{ id: string } | null>(null)
+
+  const isFlaggedId = (id: string) => {
+  const t = todos.find((x) => x.id === id)
+  return Boolean(t?.flagged)}
+
+  const onDragStart = (e: DragStartEvent) => {
+  setActiveId(String(e.active.id))}
+
+  const onDragEnd = (e: DragEndEvent) => {
+    setActiveId(null)
+
+    const active = String(e.active.id)
+    const over = e.over?.id ? String(e.over.id) : null
+    if (!over || active === over) return
+
+    const activeFlag = isFlaggedId(active)
+    const overFlag = isFlaggedId(over)
+
+    // ✅ DEIN WUNSCH:
+    // Cross-group Drop wird ignoriert -> snap back
+    if (activeFlag !== overFlag) return
+
+    setTodos((prev) => {
+      const sorted = sortTodos(prev)
+
+      const group = sorted.filter((t) => t.flagged === activeFlag)
+      const rest = sorted.filter((t) => t.flagged !== activeFlag)
+
+      const oldIndex = group.findIndex((t) => t.id === active)
+      const newIndex = group.findIndex((t) => t.id === over)
+      if (oldIndex === -1 || newIndex === -1) return prev
+
+      const moved = arrayMove(group, oldIndex, newIndex).map((t, i) => ({ ...t, position: i }))
+
+      // flagged-first hard
+      return activeFlag ? [...moved, ...rest] : [...rest, ...moved]
+    })
+  }
 
   const router = useRouter()
   const supabase = createClient()
@@ -458,7 +532,7 @@ export default function AppPage() {
               className="p-1 rounded-xl"
               aria-label="Toggle theme"
             >
-              <Image src="/todocan.svg" alt="Todocan Logo" width={40} height={40} priority />
+              <Image src="/todocan.svg" alt="Todocan Logo" width={40} height={40} priority  className="h-11 w-11 sm:h-10 sm:w-10"/>
             </motion.button>
             <h1 className="text-2xl md:text-3xl font-bold whitespace-nowrap">ToDoCan</h1>
           </div>
@@ -600,50 +674,132 @@ export default function AppPage() {
             </CardContent>
           </Card>
 
-          <motion.div layout className="space-y-2">
-            {visibleTodos.length === 0 ? (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">No todos yet. Add one above to get started!</CardContent>
-              </Card>
-            ) : (
-              visibleTodos.map((todo) => (
-                <motion.div
-                  key={todo.id}
-                  layout
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-                >
+          <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+            >
+              <div className="space-y-2">
+                {visibleTodos.length === 0 ? (
                   <Card>
-                    <CardContent className="py-4">
-                      <div className="flex items-center gap-3">
-                        <Checkbox checked={todo.completed} onCheckedChange={() => toggleTodo(todo.id, todo.completed)} className="h-6 w-6" />
-
-                        <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>{todo.title}</span>
-
-                        <div className="flex items-center gap-2">
-                          <FlagButton
-                            active={todo.flagged}
-                            onToggle={() => toggleFlag(todo)}
-                            label={todo.flagged ? 'Unflag todo' : 'Flag todo as priority'}
-                          />
-
-                          <Button
-                            onClick={() => void deleteTodo(todo.id)}
-                            variant="destructive"
-                            size="sm"
-                            className="hover:scale-110"
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
+                    <CardContent className="py-8 text-center text-muted-foreground">
+                      No todos yet. Add one above to get started!
                     </CardContent>
                   </Card>
-                </motion.div>
-              ))
-            )}
-          </motion.div>
+                ) : (
+                  <>
+                    {/* flagged group */}
+                    <SortableContext
+                      items={visibleTodos.filter((t) => t.flagged).map((t) => t.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {visibleTodos
+                        .filter((t) => t.flagged)
+                        .map((todo) => (
+                          <SortableTodoRow key={todo.id} todo={todo}>
+                            {/* DEIN bisheriges motion.div + Card */}
+                            <motion.div
+                              initial={{ opacity: 0, y: -8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+                            >
+                              <Card>
+                                <CardContent className="py-4">
+                                  <div className="flex items-center gap-3">
+                                    <Checkbox
+                                      checked={todo.completed}
+                                      onCheckedChange={() => toggleTodo(todo.id, todo.completed)}
+                                      className="h-6 w-6"
+                                    />
+
+                                    <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>
+                                      {todo.title}
+                                    </span>
+
+                                    <div className="flex items-center gap-2">
+                                      <FlagButton
+                                        active={todo.flagged}
+                                        onToggle={() => toggleFlag(todo)}
+                                        label={todo.flagged ? 'Unflag todo' : 'Flag todo as priority'}
+                                      />
+
+                                      <Button onClick={() => void deleteTodo(todo.id)} size="sm" className="hover:scale-110">
+                                        Delete
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </motion.div>
+                          </SortableTodoRow>
+                        ))}
+                    </SortableContext>
+
+                    {/* unflagged group */}
+                    <SortableContext
+                      items={visibleTodos.filter((t) => !t.flagged).map((t) => t.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {visibleTodos
+                        .filter((t) => !t.flagged)
+                        .map((todo) => (
+                          <SortableTodoRow key={todo.id} todo={todo}>
+                            <motion.div
+                              initial={{ opacity: 0, y: -8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+                            >
+                              <Card>
+                                <CardContent className="py-4">
+                                  <div className="flex items-center gap-3">
+                                    <Checkbox
+                                      checked={todo.completed}
+                                      onCheckedChange={() => toggleTodo(todo.id, todo.completed)}
+                                      className="h-6 w-6"
+                                    />
+
+                                    <span className={cn('flex-1', todo.completed ? 'line-through text-muted-foreground' : '')}>
+                                      {todo.title}
+                                    </span>
+
+                                    <div className="flex items-center gap-2">
+                                      <FlagButton
+                                        active={todo.flagged}
+                                        onToggle={() => toggleFlag(todo)}
+                                        label={todo.flagged ? 'Unflag todo' : 'Flag todo as priority'}
+                                      />
+
+                                      <Button onClick={() => void deleteTodo(todo.id)} size="sm" className="hover:scale-110">
+                                        Delete
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </motion.div>
+                          </SortableTodoRow>
+                        ))}
+                    </SortableContext>
+                  </>
+                )}
+              </div>
+
+              {/* Smooth snap-back beim forbidden drop */}
+              <DragOverlay>
+                {activeId ? (
+                  <div className="pointer-events-none">
+                    <Card>
+                      <CardContent className="py-4">
+                        <div className="text-sm font-medium">
+                          {todos.find((t) => t.id === activeId)?.title ?? ''}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
         </div>
       </main>
 
